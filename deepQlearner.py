@@ -18,16 +18,8 @@ np.set_printoptions(threshold='nan')
 #PARAMETERS
 #-------------------------------------------------------------------------
 
-#Network Structure: feed forward 4x10x10x10x5
-#Input = x,y position and velocity
-#Output = Q values for forward, back, left, right, hold
-n_nodes_h1 = 5
-n_nodes_h2 = 5
-n_nodes_h3 = 5
-
 #I mean actions
-n_classes = 3
-input_size = 2
+n_classes = 5
 
 buff_size = 1000000
 batch_size = 32 #How many experiences to use for each training step.
@@ -39,8 +31,7 @@ anneling_steps = 500000 #How many steps of training to reduce startE to endE.
 num_episodes = 10000 #How many episodes of game environment to train network with.
 max_epLength = 200 #The max allowed length of our episode.
 load_model = False #Whether to load a saved model.
-path = "../log/logfile-exp-6" #The path to save our model to.
-h_size = 512 #The size of the final convolutional layer before splitting it into Advantage and Value streams.
+path = "/root/log-servo/logfile-exp-0" #The path to save our model to.
 tau = 0.001 #Rate to update target network toward primary network
 learningrate = 0.001
 steps_till_training = 10000 #Steps network takes before training so it has a batch to sample from
@@ -48,30 +39,20 @@ steps_till_training = 10000 #Steps network takes before training so it has a bat
 
 class Qnetwork():
     def __init__(self):
-        #The network recieves a frame from the game, flattened into an array.
-        #It then resizes it and processes it through four convolutional layers.
-	self.data = tf.placeholder('float',[None,input_size],name="input") #input data
-	with tf.name_scope("layer1"):
-		hidden_1_layer = {'weights':tf.Variable(tf.random_normal([input_size,n_nodes_h1]),name="W"),'biases':tf.Variable(tf.random_normal([n_nodes_h1]),name="B")}
-		l1 = tf.add(tf.matmul(self.data,hidden_1_layer['weights']),hidden_1_layer['biases'])
-		l1 = tf.nn.relu(l1)
+        self.data =  tf.placeholder(shape=[None,320,240,1],dtype=tf.float32) 
+        with tf.name_scope("layer1"):
+                self.conv1 = slim.conv2d(inputs=self.data,num_outputs=32,kernel_size=[16,16],stride=[8,8],padding='VALID', biases_initializer=None)
 
 	with tf.name_scope("layer2"):
-		hidden_2_layer = {'weights':tf.Variable(tf.random_normal([n_nodes_h1,n_nodes_h2]),name="W"),'biases':tf.Variable(tf.random_normal([n_nodes_h2]),name="B")}
-		l2 = tf.add(tf.matmul(l1,hidden_2_layer['weights']),hidden_2_layer['biases'])
-		l2 = tf.nn.relu(l2)
-    
-	with tf.name_scope("layer3"):
-		hidden_3_layer = {'weights':tf.Variable(tf.random_normal([n_nodes_h2,n_nodes_h3]),name="W"),'biases':tf.Variable(tf.random_normal([n_nodes_h3]),name="B")}
-		l3 = tf.add(tf.matmul(l2,hidden_3_layer['weights']),hidden_3_layer['biases'])
-		l3 = tf.nn.relu(l3)
+                self.conv2 = slim.conv2d(inputs=self.conv1,num_outputs=64,kernel_size=[8,8],stride=[4,4],padding='VALID', biases_initializer=None)
 
-	with tf.name_scope("output_layer"):
-		output_layer = {'weights':tf.Variable(tf.random_normal([n_nodes_h3,n_classes]),name="W"),'biases':tf.Variable(tf.random_normal([n_classes]),name="B")}
-    
-    	self.Qout = tf.add(tf.matmul(l3,output_layer['weights']),output_layer['biases'])
+        with tf.name_scope("layer3"):
+                self.conv3 = slim.conv2d(inputs=self.conv2,num_outputs=64,kernel_size=[4,4],stride=[2,2],padding='VALID', biases_initializer=None)
+
+        with tf.name_scope("output_layer"):
+                self.Qout = slim.conv2d(inputs=self.conv3,num_outputs=n_classes,kernel_size=[3,3],stride=[1,1],padding='VALID', biases_initializer=None)
+                
 		
-		#Max q val (best action)
         self.predict = tf.argmax(self.Qout,1)
         
         #Below we obtain the loss by taking the sum of squares difference between the target and prediction Q values.

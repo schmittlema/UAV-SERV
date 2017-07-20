@@ -7,6 +7,7 @@ import subprocess
 import time
 import math
 from random import randint
+import random
 
 from gym import utils, spaces
 import gazebo_env
@@ -16,7 +17,7 @@ from mavros_msgs.msg import OverrideRCIn, PositionTarget,State
 from sensor_msgs.msg import LaserScan, NavSatFix
 from std_msgs.msg import Float64;
 from gazebo_msgs.msg import ModelStates,ModelState
-from gazebo_msgs.srv import SetModelState
+from gazebo_msgs.srv import SetModelState,GetModelState
 
 from mavros_msgs.srv import CommandBool, CommandTOL, SetMode
 from geometry_msgs.msg import PoseStamped,Pose,Vector3,Twist,TwistStamped
@@ -101,6 +102,7 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
         self.pause = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
 	
 	self.model_state = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
+	self.get_model_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
 
         self.reset_proxy = rospy.ServiceProxy('/gazebo/reset_world', Empty)
 
@@ -115,9 +117,7 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
         self.takeoff_proxy = rospy.ServiceProxy('mavros/cmd/takeoff', CommandTOL)
         self.bridge = CvBridge()
 
-        rospy.Subscriber('multisense_sl/camera/left/image_raw',Image,self.callbackleft)
-        rospy.Subscriber('multisense_sl/camera/right/image_raw',Image,self.callbackright)
-        rospy.Subscriber('camera/depth/image_raw',Image,self.callbackdepth)
+        rospy.Subscriber('uav_camera_down/image_raw_down',Image,self.callback)
 
         self.state = ""
         self.twist = TwistStamped()
@@ -128,9 +128,6 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
 	self.successes = 0
 
 
-        self.stereo = cv2.StereoBM_create(16,50)
-        self.depth_image = False
-	
         self._seed()
 
         self.cur_pose = PoseStamped()
@@ -139,7 +136,7 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
         self.pose = PoseStamped()
         self.pose.pose.position.x = 0
         self.pose.pose.position.y = 0
-        self.pose.pose.position.z = 2
+        self.pose.pose.position.z = 20
 
         self.hold_state = PoseStamped()
         self.hold_state.pose.position.x = 0
@@ -153,7 +150,7 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
         self.new_pose = False
         self.steps = 0
         self.max_episode_length = 200
-	self.old_reward = -10
+        self.img = False
 
 
     def pos_cb(self,msg):
@@ -202,35 +199,14 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
             except rospy.ServiceException, e:
                 print ("/gazebo/unpause_physics service call failed")
 
-    def callbackleft(self,data):
+    def callback(self,data):
         try:
-            self.left_img = self.bridge.imgmsg_to_cv2(data,"mono8")
+            self.img = self.bridge.imgmsg_to_cv2(data,"mono8")
         except CvBridgeError as e:
             print(e)
-
-    def callbackright(self,data):
-        try:
-            self.right_img = self.bridge.imgmsg_to_cv2(data,"mono8")
-        except CvBridgeError as e:
-            print(e)
-
-    def callbackdepth(self,data):
-        #print(self.depth_image.size)
-        try:
-            img = self.bridge.imgmsg_to_cv2(data,"passthrough")
-            self.depth_image = cv2.resize(img,(0,0),fx=0.5,fy=0.5)
-        except CvBridgeError, e:
-            print e
-
-        self.depth_image = np.array(self.depth_image, dtype=np.uint8)
-        cv2.normalize(self.depth_image,self.depth_image,1,255,cv2.NORM_MINMAX)
-        #self.depth_image = self.depth_image * 50
 
     def observe(self):
-        return self.depth_image
-
-    def observe_test(self):
-        return [self.cur_pose.pose.position.x,self.targetx]
+        return self.img
     
     def wait_until_start(self):
         while True:
@@ -248,11 +224,20 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
             except:
                 pass
 
-    def reset_model(self):
+    def reset_model(self,height):
 	modelstate = ModelState()
 	modelstate.model_name = "f450"
 	modelstate.pose.position.x = 0
 	modelstate.pose.position.y = 0
+	modelstate.pose.position.z = height
+	self.model_state(modelstate)
+
+    def move_apriltag(self):
+	modelstate = ModelState()
+	modelstate.model_name = "apriltag"
+        numbers = range(-10,-1) + range(1,10)
+	modelstate.pose.position.x = random.choice(numbers)
+	modelstate.pose.position.y = random.choice(numbers)
 	modelstate.pose.position.z = 0
 	self.model_state(modelstate)
 
@@ -265,6 +250,21 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
             return True
         return False
 
+    def get_state(self):
+        return self.get_model_state("f450","world")
+
+    def get_april_state(self):
+        return self.get_model_state("apriltag","world")
+
+    def wait_for_reposition(self,x,y,z):
+        self.x_vel = 0
+        self.y_vel = 0
+        while abs(self.cur_pose.pose.position.z - z) > .3 or abs(self.cur_pose.pose.position.y - y) > .3 or abs(self.cur_pose.pose.position.x - x) > .3 or abs(self.get_state().pose.position.z - z) > .3 or abs(self.get_state().pose.position.y - y) > .3 or abs(self.get_state().pose.position.x - x) > .3:
+            self.rate.sleep()
+
+    def over_tag(self):
+        return abs(self.get_state().pose.position.y -self.get_april_state().pose.position.y) < .3 and abs(self.get_state().pose.position.x -self.get_april_state().pose.position.x) < .3
+
     def detect_done(self,reward):
         done = False
         if self.detect_crash():
@@ -272,16 +272,19 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
             done = True
             self.steps = 0
 	    self.hard_reset()
-        if reward == 10:
+        if self.over_tag():
 	    print "GOAL"
             done = True
             self.steps = 0
 	    self.successes += 1
+	    self.reset_model(20)
+            self.wait_for_reposition(0,0,20)
         if self.steps >= self.max_episode_length:
 	    print "MAXOUT"
             done = True
             self.steps = 0
-	    self.reset_model()
+	    self.reset_model(20)
+            self.wait_for_reposition(0,0,20)
 	    reward = reward -2
         return done,reward
 
@@ -290,56 +293,34 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
         self.pause_sim = 0 
         if action == 0: #HOLD
             self.x_vel = 0
-        elif action == 1: #RIGHT
+            self.y_vel = 0
+        elif action == 1: #LEFT
             self.x_vel = -1
-        elif action == 2: #LEFT
+        elif action == 2: #RIGHT
             self.x_vel = 1
+        elif action == 3: #FORWARD
+            self.y_vel = 1
+        elif action == 4: #BACK
+            self.y_vel = -1
 
         self.rate.sleep()
-	#while abs(self.cur_vel.twist.linear.x - self.x_vel) > 0.1:
-	#    self.rate.sleep()
         observation = self.observe()
         reward = self.get_reward(action)
 
         done,reward = self.detect_done(reward) 
 
         if done:
-            self.targetx = randint(-10,10)
+            self.move_apriltag()
         self.pause_sim = 1
         return observation, reward,done,{}
 
-    def sigmoid(self,x):
-        return (1 / (1 + math.exp(-x)))*2
-
     def get_reward(self,action):
-	raw = .2/abs(self.targetx-self.cur_pose.pose.position.x)
-	direction = self.targetx-self.cur_pose.pose.position.x
-	if raw >=1:
-	    return 10
-	else:
-	    if action ==1 and direction < 0 or action==2 and direction > 0:
-		return -0.001
-	    else:
-	        return -.01
-
-    def collect_reward(self):
-	#Returns a -1 if moving futher away and a +1 if moving closer.It will return 10 if it hits goal
-	#Returns reward relative to how close you moved to the goal in the last time step
-	cur_reward = self.get_state_reward()
-	if cur_reward == 10:
-	    self.old_reward = -10
-	    return 10
+	rawx = self.get_state().pose.position.x-self.get_april_state().pose.position.x
+	rawy = self.get_state().pose.position.y-self.get_april_state().pose.position.y
+        if action ==1 and rawx > 0 or action==2 and rawx < 0 or action ==3 and rawy < 0 or action==4 and rawy > 0:
+            return 1
         else:
-	    diff = self.old_reward - cur_reward
-	    self.old_reward = cur_reward
-	    return diff* -1
-
-    def get_state_reward(self):
-	raw = .2/abs(self.targetx-self.cur_pose.pose.position.x)
-	if raw >=1:
-	    return 10
-	else:
-	    return -.01
+            return -1
 
 
     def _killall(self, process_name):
@@ -348,17 +329,12 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
             os.system("kill -9 "+str(pid))
 
     def _reset(self):
-        return self.observe_test()
+        return self.observe()
 
     def hard_reset(self):
         # Resets the state of the environment and returns an initial observation.
         print "resetting"
-        self.reset_model()
-        rospy.wait_for_service('/gazebo/reset_world')
-        try:
-            self.reset_proxy()
-        except rospy.ServiceException, e:
-            print ("/gazebo/reset_world service call failed")
+        self.reset_model(0)
 
         self.started = False
         self.new_pose = False
