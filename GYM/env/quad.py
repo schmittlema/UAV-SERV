@@ -130,13 +130,15 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
 
         self._seed()
 
+        self.alt = 10
+
         self.cur_pose = PoseStamped()
 	self.cur_vel = TwistStamped()
 
         self.pose = PoseStamped()
         self.pose.pose.position.x = 0
         self.pose.pose.position.y = 0
-        self.pose.pose.position.z = 20
+        self.pose.pose.position.z = self.alt
 
         self.hold_state = PoseStamped()
         self.hold_state.pose.position.x = 0
@@ -201,7 +203,7 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
 
     def callback(self,data):
         try:
-            self.img = self.bridge.imgmsg_to_cv2(data,"mono8")
+            self.img = self.bridge.imgmsg_to_cv2(data,"bgr8")
         except CvBridgeError as e:
             print(e)
 
@@ -235,8 +237,9 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
     def move_apriltag(self):
 	modelstate = ModelState()
 	modelstate.model_name = "apriltag"
-        numbers = range(-10,-1) + range(1,10)
+        numbers = range(-3,-1) + range(1,3)
 	modelstate.pose.position.x = random.choice(numbers)
+        numbers = range(-3,-1) + range(1,3)
 	modelstate.pose.position.y = random.choice(numbers)
 	modelstate.pose.position.z = 0
 	self.model_state(modelstate)
@@ -277,14 +280,14 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
             done = True
             self.steps = 0
 	    self.successes += 1
-	    self.reset_model(20)
-            self.wait_for_reposition(0,0,20)
+	    self.reset_model(self.alt)
+            self.wait_for_reposition(0,0,self.alt)
         if self.steps >= self.max_episode_length:
 	    print "MAXOUT"
             done = True
             self.steps = 0
-	    self.reset_model(20)
-            self.wait_for_reposition(0,0,20)
+	    self.reset_model(self.alt)
+            self.wait_for_reposition(0,0,self.alt)
 	    reward = reward -2
         return done,reward
 
@@ -295,13 +298,13 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
             self.x_vel = 0
             self.y_vel = 0
         elif action == 1: #LEFT
-            self.x_vel = -1
+            self.x_vel = -0.5
         elif action == 2: #RIGHT
-            self.x_vel = 1
+            self.x_vel = 0.5
         elif action == 3: #FORWARD
-            self.y_vel = 1
+            self.y_vel = 0.5
         elif action == 4: #BACK
-            self.y_vel = -1
+            self.y_vel = -0.5
 
         self.rate.sleep()
         observation = self.observe()
@@ -349,4 +352,4 @@ class GazeboQuadEnv(gazebo_env.GazeboEnv):
             self.rate.sleep()
         print "hard world reset"
 
-        return self.observe_test()
+        return self.observe()

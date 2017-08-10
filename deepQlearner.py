@@ -19,7 +19,7 @@ np.set_printoptions(threshold='nan')
 #-------------------------------------------------------------------------
 
 #I mean actions
-n_classes = 5
+n_classes = 4
 
 buff_size = 1000000
 batch_size = 32 #How many experiences to use for each training step.
@@ -39,9 +39,10 @@ steps_till_training = 10000 #Steps network takes before training so it has a bat
 
 class Qnetwork():
     def __init__(self):
-        self.data =  tf.placeholder(shape=[None,320,240,1],dtype=tf.float32) 
+        self.data = tf.placeholder(shape=[None,230400],dtype=tf.float32)
+        self.input =  tf.reshape(self.data,shape=[-1,240,320,3]) 
         with tf.name_scope("layer1"):
-                self.conv1 = slim.conv2d(inputs=self.data,num_outputs=32,kernel_size=[16,16],stride=[8,8],padding='VALID', biases_initializer=None)
+                self.conv1 = slim.conv2d(inputs=self.input,num_outputs=32,kernel_size=[16,16],stride=[8,8],padding='VALID', biases_initializer=None)
 
 	with tf.name_scope("layer2"):
                 self.conv2 = slim.conv2d(inputs=self.conv1,num_outputs=64,kernel_size=[8,8],stride=[4,4],padding='VALID', biases_initializer=None)
@@ -49,8 +50,11 @@ class Qnetwork():
         with tf.name_scope("layer3"):
                 self.conv3 = slim.conv2d(inputs=self.conv2,num_outputs=64,kernel_size=[4,4],stride=[2,2],padding='VALID', biases_initializer=None)
 
-        with tf.name_scope("output_layer"):
-                self.Qout = slim.conv2d(inputs=self.conv3,num_outputs=n_classes,kernel_size=[3,3],stride=[1,1],padding='VALID', biases_initializer=None)
+        with tf.name_scope("layer4"):
+                self.conv4 = slim.conv2d(inputs=self.conv3,num_outputs=n_classes,kernel_size=[2,2],stride=[1,1],padding='VALID', biases_initializer=None)
+
+        with tf.name_scope("layer5"):
+                self.Qout = slim.fully_connected(tf.reshape(self.conv4,[-1,2*n_classes]),n_classes)
                 
 		
         self.predict = tf.argmax(self.Qout,1)
@@ -83,7 +87,11 @@ class experience_buffer():
         self.buffer.extend(experience)
             
     def sample(self,size):
+        #print np.array(random.sample(self.buffer,size)).shape
         return np.reshape(np.array(random.sample(self.buffer,size)),[size,5])
+
+def processState(states):
+    return np.reshape(states,[230400])
 
 
 def updateTargetGraph(tfVars,tau):
@@ -148,6 +156,7 @@ def main():
 	        episodeBuffer = experience_buffer()
 		#Reset environment and get first new observation
                 s = env.reset()
+                s = processState(s)
                 d = False
 		rAll = 0
 		j=0
@@ -160,6 +169,7 @@ def main():
                     else:
                         a = sess.run(mainQN.predict,feed_dict={mainQN.data:[s]})[0]
                     s1,r,d,info = env.step(a)
+                    s1 = processState(s1)
                     total_steps += 1
                     episodeBuffer.add(np.reshape(np.array([s,a,r,s1,d]),[1,5])) #Save the experience to our episode buffer.
                     
